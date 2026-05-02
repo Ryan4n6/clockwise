@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include <ArduinoOTA.h>
 
 // Clockface
 #include <Clockface.h>
@@ -9,6 +10,13 @@
 #include <CWPreferences.h>
 #include <CWWebServer.h>
 #include <StatusController.h>
+
+#ifndef OTA_HOSTNAME
+  #define OTA_HOSTNAME "clockwise"
+#endif
+#ifndef OTA_PASSWORD
+  #define OTA_PASSWORD "clockwise"
+#endif
 
 #define MIN_BRIGHT_DISPLAY_ON 4
 #define MIN_BRIGHT_DISPLAY_OFF 0
@@ -108,6 +116,50 @@ void automaticBrightControl()
   }
 }
 
+void setupOTA()
+{
+  // Hostname is set BEFORE begin() so it's used both for the _arduino._tcp
+  // mDNS record and for the AUTH challenge string. ArduinoOTA reuses the
+  // mDNS instance already started by WiFiController, so no MDNS.begin here.
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+
+  ArduinoOTA.onStart([]() {
+    // Sketch updates only — we don't ship SPIFFS images, so SPIFFS path
+    // means an unmount before flash, which would brick the running clock if
+    // the upload aborts. Treat it as a hard error.
+    String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+    Serial.printf("[OTA] Start: %s\n", type.c_str());
+    if (dma_display) dma_display->clearScreen();
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    static unsigned int lastPct = 255;
+    unsigned int pct = (progress * 100) / total;
+    if (pct != lastPct) {
+      Serial.printf("[OTA] Progress: %u%%\n", pct);
+      lastPct = pct;
+    }
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("[OTA] End — rebooting");
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    const char *msg = "Unknown";
+    switch (error) {
+      case OTA_AUTH_ERROR:    msg = "Auth failed";    break;
+      case OTA_BEGIN_ERROR:   msg = "Begin failed";   break;
+      case OTA_CONNECT_ERROR: msg = "Connect failed"; break;
+      case OTA_RECEIVE_ERROR: msg = "Receive failed"; break;
+      case OTA_END_ERROR:     msg = "End failed";     break;
+    }
+    Serial.printf("[OTA] Error %u: %s\n", error, msg);
+  });
+
+  ArduinoOTA.begin();
+  Serial.printf("[OTA] Ready: %s.local @ %s\n",
+                OTA_HOSTNAME, WiFi.localIP().toString().c_str());
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -134,9 +186,10 @@ void setup()
   StatusController::getInstance()->wifiConnecting();
   if (wifi.begin())
   {
+    setupOTA();
     StatusController::getInstance()->ntpConnecting();
-    cwDateTime.begin(ClockwiseParams::getInstance()->timeZone.c_str(), 
-        ClockwiseParams::getInstance()->use24hFormat, 
+    cwDateTime.begin(ClockwiseParams::getInstance()->timeZone.c_str(),
+        ClockwiseParams::getInstance()->use24hFormat,
         ClockwiseParams::getInstance()->ntpServer.c_str(),
         ClockwiseParams::getInstance()->manualPosix.c_str());
     clockface->setup(&cwDateTime);
@@ -149,6 +202,7 @@ void loop()
 
   if (wifi.isConnected())
   {
+    ArduinoOTA.handle();
     ClockwiseWebServer::getInstance()->handleHttpRequest();
     ezt::events();
   }
