@@ -89,6 +89,12 @@ void displaySetup(bool swapBlueGreen, bool swapBlueRed, uint8_t displayBright, u
     Serial.printf("[ERROR] Invalid I2S speed from config:%d\n", i2cSpeed);
   }
 
+  // Full 8-bit color depth (256 levels/channel) for smooth grayscale on the moon.
+  // We can afford it because the canvas fetch now runs over plain HTTP (no TLS
+  // handshake), so there's no contiguous-heap pressure. The old 4-bit workaround
+  // existed only to free heap for HTTPS and posterized the moon into a duotone.
+  mxconfig.setPixelColorDepthBits(8);
+
   // Display Setup
   dma_display = new MatrixPanel_I2S_DMA(mxconfig);
   dma_display->begin();
