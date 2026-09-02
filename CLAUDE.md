@@ -79,7 +79,13 @@ git submodule update --init firmware/clockfaces/   # PlatformIO only needs the c
   - `StatusController`: boot animation + LED blink patterns for status feedback.
   - `IClockface`: interface every clockface implements (`setup(CWDateTime*)`, `update()`).
 - **`firmware/lib/cw-gfx-engine/`** — game-engine-style graphics primitives (`Sprite`, `Tile`, `Game`, `Object`, `EventBus`, `Locator`) used by clockfaces that animate (Mario, Pacman, Castlevania).
-- **`firmware/clockfaces/cw-cf-0x0N/`** — each clockface is its own GitHub repo, must export a class named `Clockface` implementing `IClockface`. Canvas (`cw-cf-0x07`) is special: it renders a JSON-described theme fetched from a server, configured via `canvasFile` / `canvasServer` prefs.
+- **`firmware/clockfaces/cw-cf-0x0N/`** — each clockface is its own GitHub repo, must export a class named `Clockface` implementing `IClockface`. Canvas (`cw-cf-0x07`) is special: it renders a JSON-described theme fetched from a server, configured via `canvasFile` / `canvasServer` prefs. It re-fetches on the document's own `refresh` interval (default 30 min); see `docs/canvas-clockface.md` for the document schema, the `delay`-is-uint16 trap, and the UDP debug beacons.
+
+## Forked clockface source lives in `clockfaces-local/`
+
+`firmware/clockfaces/*` are upstream submodules, so our edits cannot be committed there, and `firmware/lib/cw-cf-*` is gitignored (it is the LDF target). Our modified sources are tracked in `firmware/clockfaces-local/<clockface>/`, with `firmware/clockfaces-local/sync.sh {check|push|pull}` moving them to and from `lib/`.
+
+Run `sync.sh check` before trusting a build and `sync.sh pull` before committing. These copies drifted apart silently once already (clockwise#11).
 
 Display I/O goes through `MatrixPanel_I2S_DMA` from the HUB75 component. `displaySetup()` in `main.cpp` is where GPIO remapping for RGB-order quirks (`swapBlueGreen`, `swapBlueRed`) and the configurable `driver` / `i2cSpeed` / `E_pin` get applied — these are the knobs to touch when a panel renders wrong colors or won't latch.
 
@@ -100,4 +106,13 @@ See `CHECKLIST.md` — manual today. Cutting a `releases/1.x.x` branch triggers 
 
 ## Known device
 
-Ryan's clock as of 2026-05-02 is at `192.168.1.44` (MAC `24:dc:c3:0c:6a:f4`, Espressif OUI). Settings UI: http://192.168.1.44/. Currently running stock 1.4.2 (CW_20240421) with no `CLOCKFACE_NAME` baked in (reports `UNKNOWN`).
+Ryan's clock is at `192.168.1.245`. Settings UI: http://192.168.1.245/. Running `1.4.2` / `MOONRFSH` on `cw-cf-0x07` (Canvas), pointed at the moon worker. The `192.168.1.44` address in earlier notes is stale.
+
+The laptop is not always on that LAN. Reach the device through the pi-hole over Tailscale:
+
+```bash
+ssh pi@100.105.25.23 "curl -s -D - -o /dev/null http://192.168.1.245/get" | grep -i canvas
+ssh pi@100.105.25.23 "curl -s -X POST http://192.168.1.245/restart"
+```
+
+`restore-matrix.sh` in `~/Projects/moon-canvas` puts the canvas prefs back to their pre-moon state.

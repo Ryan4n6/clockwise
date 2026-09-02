@@ -22,6 +22,9 @@ void Clockface::setup(CWDateTime *dateTime)
   if (deserializeDefinition()) {
     DBG("CF7 deser OK");
     clockfaceSetup();
+    // Seed the re-fetch clock from the boot fetch so the first refresh lands one
+    // full interval later, not immediately (#11).
+    _lastFetchMillis = millis();
     DBG("CF9 clockfaceSetup done");
   } else {
     DBG("CF7 deser FAILED");
@@ -47,6 +50,42 @@ void Clockface::update()
   {
     refreshDateTime();
     lastMillis = millis();
+  }
+
+  // Re-pull the canvas document (#11). refreshDateTime() above only repaints
+  // "datetime" elements, so a server-generated canvas (moon age, illumination,
+  // phase name, moon image) would otherwise show its boot-time values forever.
+  // Unsigned subtraction, so this stays correct across the millis() rollover.
+  if (millis() - _lastFetchMillis >= _refreshMs)
+  {
+    refetchCanvas();
+  }
+}
+
+void Clockface::refetchCanvas()
+{
+  // Stamp the attempt, not the success: a failing origin must not put us into a
+  // retry-every-loop hammer against it. Next try is one full interval out.
+  _lastFetchMillis = millis();
+  DBG("CF10 canvas refetch start");
+
+  // Drop sprites BEFORE the fetch. deserializeDefinition() parses straight into
+  // the shared `doc`, so the instant it runs every sprite's index points at the
+  // old document. On success clockfaceSetup() rebuilds them; on failure `doc` is
+  // left clobbered and a surviving sprite would hand renderImage() a nullptr
+  // (handleSpriteAnimation) -> LoadProhibited panic.
+  sprites.clear();
+
+  if (deserializeDefinition())
+  {
+    clockfaceSetup();
+    DBG("CF11 canvas refetch OK, repainted");
+  }
+  else
+  {
+    // deserializeDefinition() already drew its own error splash. The last good
+    // static elements stay on the panel, which beats a blank one or a reboot.
+    DBG("CF11 canvas refetch FAILED, keeping last frame");
   }
 }
 
@@ -119,6 +158,14 @@ void Clockface::clockfaceSetup()
   Locator::getDisplay()->fillRect(0, 0, 64, 64, doc["bgColor"].as<const uint16_t>());
 
   delay = doc["delay"].as<const uint16_t>();
+
+  // "refresh" is the document's own re-fetch cadence in ms (#11). Read as
+  // uint32_t: `delay` above is uint16_t and truncates anything over 65535, which
+  // is why the moon worker's delay:1800000 was silently arriving as 30528.
+  // Clamp up to CANVAS_MIN_REFRESH_MS so a missing/zero/typo'd value can never
+  // become a tight fetch loop.
+  _refreshMs = doc["refresh"] | CANVAS_DEFAULT_REFRESH_MS;
+  if (_refreshMs < CANVAS_MIN_REFRESH_MS) _refreshMs = CANVAS_MIN_REFRESH_MS;
 
   // Draw static elements
   renderElements(doc["setup"].as<JsonArrayConst>());
