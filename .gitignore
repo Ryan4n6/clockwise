@@ -11,3 +11,10 @@ sdkconfig*
 .vscode
 
 dependencies.lock
+
+# PlatformIO build artifacts
+firmware/.pio
+
+# Local symlinks created to point PlatformIO's LDF at one clockface at a time.
+# CI builds use the same trick (see clockwise-ci.yml) but clean up after.
+firmware/lib/cw-cf-*
