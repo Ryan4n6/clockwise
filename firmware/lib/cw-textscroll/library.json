@@ -1,0 +1,7 @@
+{
+  "name": "cw-textscroll",
+  "version": "1.0.0",
+  "description": "Pure scroll geometry for canvas text elements. No Arduino dependency so it unit-tests on the host.",
+  "frameworks": "*",
+  "platforms": "*"
+}
