@@ -86,8 +86,10 @@ void Clockface::refetchCanvas()
 
     // Content changed (or the document carries no etag, so we cannot know).
     // Drop sprites before rebuilding: their indexes referred to the previous
-    // document and clockfaceSetup() recreates them from the new one.
+    // document and clockfaceSetup() recreates them from the new one. Scrollers
+    // hold an elementIndex into that same document, for the same reason.
     sprites.clear();
+    scrollers.clear();
     clockfaceSetup();
     DBG("CF11 canvas refetch OK, repainted");
   }
@@ -97,40 +99,166 @@ void Clockface::refetchCanvas()
     // leaves the shared `doc` clobbered, so any surviving sprite would index
     // into it and hand renderImage() a nullptr -> LoadProhibited panic.
     sprites.clear();
+    scrollers.clear();
     _lastEtag = "";   // force a repaint on the next good fetch
     DBG("CF11 canvas refetch FAILED, keeping last frame");
   }
 }
 
-void Clockface::setFont(const char *fontName)
+// Font selection against an arbitrary surface. The panel and the off-screen
+// text canvas both need it, and this Adafruit_GFX has no getFont() to read the
+// current selection back with, so the caller names the font every time.
+void Clockface::setFontOn(Adafruit_GFX *target, const char *fontName)
 {
-
-  if (strcmp(fontName, "picopixel") == 0)
+  // The original passed fontName straight to strcmp, so a text element that
+  // omitted "font" dereferenced null and panicked the panel.
+  if (fontName == nullptr)
   {
-    Locator::getDisplay()->setFont(&Picopixel);
+    target->setFont();
+  }
+  else if (strcmp(fontName, "picopixel") == 0)
+  {
+    target->setFont(&Picopixel);
   }
   else if (strcmp(fontName, "square") == 0)
   {
-    Locator::getDisplay()->setFont(&atariFont);
+    target->setFont(&atariFont);
   }
   else if (strcmp(fontName, "big") == 0)
   {
-    Locator::getDisplay()->setFont(&hour8pt7b);
+    target->setFont(&hour8pt7b);
   }
   else if (strcmp(fontName, "medium") == 0)
   {
-    Locator::getDisplay()->setFont(&minute7pt7b);
+    target->setFont(&minute7pt7b);
   }
   else
   {
-    Locator::getDisplay()->setFont();
+    target->setFont();
   }
+}
+
+void Clockface::setFont(const char *fontName)
+{
+  setFontOn(Locator::getDisplay(), fontName);
+}
+
+// The shared off-screen surface for boxed text. A function-local static so the
+// 256 byte malloc happens on first use rather than during static init: this
+// file already carries a DIAG note about a static-init heap allocation faulting
+// the Canvas clockface before wifi comes up, and there is no reason to re-open
+// that question for a scratch buffer.
+//
+// Text wrap is off on it, permanently and deliberately. Adafruit_GFX defaults
+// wrap to true (Adafruit_GFX.cpp:117) and honours it in BOTH charBounds (the
+// measure path) and write (the draw path) against the surface width. Leaving it
+// on means a 100 px string measured on a 64 px surface reports back as 64 px
+// wide and two lines tall, so nothing ever looks like it overflows, no scroller
+// is ever built, and the feature silently does nothing.
+static GFXcanvas1 &textCanvas()
+{
+  static GFXcanvas1 c(TEXTBOX_CANVAS_W, TEXTBOX_CANVAS_H);
+  static bool configured = false;
+  if (!configured) { c.setTextWrap(false); configured = true; }
+  return c;
+}
+
+// True unwrapped pixel width of `content` in `fontName`.
+uint16_t Clockface::measureTextWidth(const char *content, const char *fontName)
+{
+  if (content == nullptr) return 0;
+
+  GFXcanvas1 &canvas = textCanvas();
+  setFontOn(&canvas, fontName);
+
+  int16_t bx, by;
+  uint16_t bw, bh;
+  canvas.getTextBounds(content, 0, 0, &bx, &by, &bw, &bh);
+  return bw;
+}
+
+// Draw `content` into a boxW-wide window whose left edge is at `x`, shifted left
+// by `offsetX` (0 or negative). Used for both static truncation and scrolling,
+// so the two share one clipping path.
+//
+// Composing into a 1-bit canvas is what buys the right-edge clip. Drawing at a
+// negative x clips on the left for free because writePixel bounds-checks, but
+// nothing clips the right, and an overflowing string would paint straight over
+// whatever element sits beside it.
+//
+// The blit hands drawBitmap the CANVAS width, not the box width. drawBitmap
+// recomputes its row stride as (w + 7) / 8 from the width it is given
+// (Adafruit_GFX.cpp:1012) while GFXcanvas1 allocated its rows at
+// (TEXTBOX_CANVAS_W + 7) / 8 (Adafruit_GFX.cpp:2027). Passing any other width
+// makes it read every row at the wrong offset, which renders as diagonal hash.
+// So: zero the canvas columns past the box, blit the full canvas width with the
+// transparent overload, and erase the box with a fillRect first because a
+// transparent blit paints only set bits and would leave the last frame behind.
+void Clockface::drawTextBoxed(int16_t x, int16_t y, const char *content,
+                              const char *fontName, uint16_t fg, uint16_t bg,
+                              uint16_t boxW, int16_t offsetX)
+{
+  if (content == nullptr || boxW == 0) return;
+
+  GFXcanvas1 &canvas = textCanvas();
+  if (canvas.getBuffer() == nullptr) return;   // the 256 byte malloc failed
+
+  const uint16_t box = (boxW > TEXTBOX_CANVAS_W) ? TEXTBOX_CANVAS_W : boxW;
+
+  setFontOn(&canvas, fontName);
+
+  int16_t bx, by;
+  uint16_t bw, bh;
+  canvas.getTextBounds(content, 0, 0, &bx, &by, &bw, &bh);
+  const uint16_t h = (bh > TEXTBOX_CANVAS_H) ? TEXTBOX_CANVAS_H : bh;
+  if (h == 0) return;                          // empty string, nothing to draw
+
+  canvas.fillScreen(0);
+  canvas.setTextColor(1);
+  // getTextBounds returns offsets relative to the cursor, so subtract them to
+  // land the glyphs inside the canvas instead of above its top edge.
+  canvas.setCursor(offsetX - bx, -by);
+  canvas.print(content);
+
+  // Anything past the box must be blank, because the blit below is canvas-wide.
+  if (box < TEXTBOX_CANVAS_W)
+  {
+    canvas.fillRect(box, 0, TEXTBOX_CANVAS_W - box, TEXTBOX_CANVAS_H, 0);
+  }
+
+  // Erase then draw, the same shape handleSpriteMovement() already uses.
+  Locator::getDisplay()->fillRect(x, y + by, box, h, bg);
+  Locator::getDisplay()->drawBitmap(x, y + by, canvas.getBuffer(),
+                                    TEXTBOX_CANVAS_W, h, fg);
 }
 
 void Clockface::renderText(String text, JsonVariantConst value)
 {
   int16_t x1, y1;
   uint16_t w, h;
+
+  // An element that declares a box width gets the clipped path, whether or not
+  // it also asked to scroll. Without this a string too wide for its box is
+  // painted full length here, once, over the top of its neighbours, and the
+  // scroller only ever repaints inside the box so the spill stays on the panel
+  // forever. It is also what makes SCROLL_NONE mean what its comment says it
+  // means: truncate at the box edge.
+  //
+  // Elements with no "w" keep the original unclipped path byte for byte, so
+  // every existing canvas document (the moon face included) renders exactly as
+  // it did before.
+  if (!value["w"].isNull())
+  {
+    drawTextBoxed(value["x"].as<int16_t>(),
+                  value["y"].as<int16_t>(),
+                  text.c_str(),
+                  value["font"].as<const char *>(),
+                  value["fgColor"].as<const uint16_t>(),
+                  value["bgColor"].as<const uint16_t>(),
+                  value["w"].as<uint16_t>(),
+                  0);
+    return;
+  }
 
   setFont(value["font"].as<const char *>());
 
@@ -188,6 +316,11 @@ void Clockface::clockfaceSetup()
 
   // Create sprites
   createSprites();
+
+  // Collect the text elements that overflow their box. Must run after
+  // renderElements() above, which has already drawn every element's first
+  // frame (clipped, for anything carrying a "w").
+  buildScrollers();
 }
 
 void Clockface::createSprites()
@@ -306,13 +439,91 @@ void Clockface::handleSpriteMovement(std::shared_ptr<CustomSprite>& sprite) {
     }
 }
 
-void Clockface::clockfaceLoop() {
-    if (sprites.empty()) {
-        return;
-    }
+void Clockface::buildScrollers()
+{
+  scrollers.clear();
 
+  JsonArrayConst elements = doc["setup"].as<JsonArrayConst>();
+  uint8_t idx = 0;
+  for (JsonVariantConst value : elements)
+  {
+    const char *type = value["type"].as<const char *>();
+    if (type == nullptr || strcmp(type, "text") != 0) { idx++; continue; }
+
+    const uint8_t mode = scrollModeFromName(value["scroll"].as<const char *>());
+    if (mode == SCROLL_NONE) { idx++; continue; }
+
+    const char *content = value["content"].as<const char *>();
+    if (content == nullptr) { idx++; continue; }
+
+    TextScroller s;
+    s.elementIndex = idx;
+    s.x = value["x"].as<int16_t>();
+    s.y = value["y"].as<int16_t>();
+    // Default the box to "the rest of the panel", which is what a face means
+    // when it does not say. Guard against x beyond the panel.
+    s.boxW     = value["w"] | (uint16_t)((s.x < 64) ? (64 - s.x) : 0);
+    s.scrollMs = value["scrollMs"] | (uint16_t)40;
+    s.mode     = mode;
+    s.textW    = measureTextWidth(content, value["font"].as<const char *>());
+
+    // Text that fits is not a scroller at all. renderElements() already drew it
+    // statically and it must not be re-drawn every frame.
+    if (s.textW <= s.boxW) { idx++; continue; }
+
+    s.startMs     = millis();
+    s.done        = false;
+    s.lastOffsetX = 1;      // impossible offset, forces the first draw
+    scrollers.push_back(s);
+    idx++;
+  }
+
+  if (!scrollers.empty()) {
+    DBG((String("CF12 scrollers=") + String((int)scrollers.size())).c_str());
+  }
+}
+
+void Clockface::drawScroller(TextScroller &s, int16_t offsetX)
+{
+  JsonVariantConst value = doc["setup"][s.elementIndex];
+  const char *content = value["content"].as<const char *>();
+  if (content == nullptr) return;
+
+  drawTextBoxed(s.x, s.y, content,
+                value["font"].as<const char *>(),
+                value["fgColor"].as<const uint16_t>(),
+                value["bgColor"].as<const uint16_t>(),
+                s.boxW, offsetX);
+}
+
+void Clockface::clockfaceLoop() {
+    // Sprites and scrollers are independent. The early return here used to be on
+    // sprites.empty(), which is true for every face in the rotation design, so
+    // scrolling must not hang off it.
     for (auto& sprite : sprites) {
         handleSpriteAnimation(sprite);
+    }
+    scrollLoop();
+}
+
+void Clockface::scrollLoop() {
+    if (scrollers.empty()) return;
+
+    const uint32_t now = millis();
+    for (auto& s : scrollers) {
+        if (s.done) continue;
+
+        ScrollResult r = textScrollOffset(s.textW, s.boxW,
+                                          now - s.startMs, s.scrollMs, s.mode);
+
+        // Redraw only when the pixel offset actually moved. At 40 ms/step the
+        // main loop runs many times per step, and a redraw per loop would burn
+        // the panel's frame budget repainting identical pixels.
+        if (r.offsetX != s.lastOffsetX) {
+            drawScroller(s, r.offsetX);
+            s.lastOffsetX = r.offsetX;
+        }
+        s.done = r.done;
     }
 }
 
