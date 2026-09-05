@@ -27,8 +27,10 @@
 // Every legacy canvas gets this for free; a document can ask for its own rate.
 #define CANVAS_DEFAULT_REFRESH_MS 1800000UL
 // Floor the requested rate so a bad/zero "refresh" can't turn the panel into a
-// tight HTTP loop against the origin.
-#define CANVAS_MIN_REFRESH_MS 60000UL
+// tight HTTP loop against the origin. Lowered from 60000 for multi-face
+// rotation: a face cannot be shown for less time than the fetch interval, so
+// the old floor capped rotation granularity at one minute.
+#define CANVAS_MIN_REFRESH_MS 15000UL
 
 const uint8_t CW_ICON_CANVAS[] PROGMEM = { 
 	0x00, 0x0e, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 
@@ -57,6 +59,12 @@ private:
   // compatibility and silently truncates anything over 65535 ms.
   unsigned long _lastFetchMillis = 0;
   uint32_t      _refreshMs       = CANVAS_DEFAULT_REFRESH_MS;
+
+  // Last rendered document's "etag". With refresh capped at 5 minutes for
+  // rotation, the panel re-fetches 288 times a day, and clockfaceSetup() opens
+  // with a full-screen fillRect. Repainting an unchanged document would flash
+  // the panel every 5 minutes all night. Empty means "no etag seen yet".
+  String _lastEtag;
 
   void refetchCanvas();
 

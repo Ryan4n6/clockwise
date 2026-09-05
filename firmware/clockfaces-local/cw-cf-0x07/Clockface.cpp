@@ -69,22 +69,35 @@ void Clockface::refetchCanvas()
   _lastFetchMillis = millis();
   DBG("CF10 canvas refetch start");
 
-  // Drop sprites BEFORE the fetch. deserializeDefinition() parses straight into
-  // the shared `doc`, so the instant it runs every sprite's index points at the
-  // old document. On success clockfaceSetup() rebuilds them; on failure `doc` is
-  // left clobbered and a surviving sprite would hand renderImage() a nullptr
-  // (handleSpriteAnimation) -> LoadProhibited panic.
-  sprites.clear();
-
   if (deserializeDefinition())
   {
+    // An unchanged document means an unchanged panel. Skip the repaint entirely
+    // rather than fillRect the screen and redraw identical pixels (#13).
+    // Sprites survive: the re-parsed content is byte-identical, so every
+    // _spriteReference index still points at what it did before, and
+    // CustomSprite holds an index rather than a pointer into `doc`.
+    const char *etag = doc["etag"] | "";
+    if (etag[0] != '\0' && _lastEtag == etag)
+    {
+      DBG("CF11 canvas refetch OK, unchanged, no repaint");
+      return;
+    }
+    _lastEtag = etag;
+
+    // Content changed (or the document carries no etag, so we cannot know).
+    // Drop sprites before rebuilding: their indexes referred to the previous
+    // document and clockfaceSetup() recreates them from the new one.
+    sprites.clear();
     clockfaceSetup();
     DBG("CF11 canvas refetch OK, repainted");
   }
   else
   {
-    // deserializeDefinition() already drew its own error splash. The last good
-    // static elements stay on the panel, which beats a blank one or a reboot.
+    // deserializeDefinition() already drew its own error splash. A failed parse
+    // leaves the shared `doc` clobbered, so any surviving sprite would index
+    // into it and hand renderImage() a nullptr -> LoadProhibited panic.
+    sprites.clear();
+    _lastEtag = "";   // force a repaint on the next good fetch
     DBG("CF11 canvas refetch FAILED, keeping last frame");
   }
 }
