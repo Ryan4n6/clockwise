@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <string.h>
 
 // Scroll geometry for canvas text elements, kept free of any Arduino header so
 // it can be unit-tested on the host with `pio test -e native`. The clockface
@@ -66,4 +67,15 @@ inline ScrollResult textScrollOffset(uint16_t textW,
     r.done    = true;
   }
   return r;
+}
+
+// Maps a document's "scroll" string to a mode. Anything unrecognised, missing,
+// or null means "do not move", because a typo in a canvas document should
+// produce a boring panel and never a moving one.
+inline uint8_t scrollModeFromName(const char *name)
+{
+  if (name == nullptr)           return SCROLL_NONE;
+  if (strcmp(name, "once") == 0) return SCROLL_ONCE;
+  if (strcmp(name, "loop") == 0) return SCROLL_LOOP;
+  return SCROLL_NONE;
 }

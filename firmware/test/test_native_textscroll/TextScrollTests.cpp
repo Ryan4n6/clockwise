@@ -89,6 +89,17 @@ void test_zero_text_width_fits(void) {
   TEST_ASSERT_TRUE(r.done);
 }
 
+// Mirrors Clockface::scrollModeFromName. Kept in the pure library so the
+// mapping from document string to enum is tested without a panel.
+void test_mode_name_parsing(void) {
+  TEST_ASSERT_EQUAL_UINT8(SCROLL_NONE, scrollModeFromName(nullptr));
+  TEST_ASSERT_EQUAL_UINT8(SCROLL_NONE, scrollModeFromName(""));
+  TEST_ASSERT_EQUAL_UINT8(SCROLL_NONE, scrollModeFromName("none"));
+  TEST_ASSERT_EQUAL_UINT8(SCROLL_ONCE, scrollModeFromName("once"));
+  TEST_ASSERT_EQUAL_UINT8(SCROLL_LOOP, scrollModeFromName("loop"));
+  TEST_ASSERT_EQUAL_UINT8(SCROLL_NONE, scrollModeFromName("nonsense"));
+}
+
 int runUnityTests(void) {
   UNITY_BEGIN();
   RUN_TEST(test_fitting_text_never_scrolls);
@@ -103,6 +114,7 @@ int runUnityTests(void) {
   RUN_TEST(test_zero_scrollms_is_treated_as_one);
   RUN_TEST(test_zero_box_width_does_not_crash);
   RUN_TEST(test_zero_text_width_fits);
+  RUN_TEST(test_mode_name_parsing);
   return UNITY_END();
 }
 
