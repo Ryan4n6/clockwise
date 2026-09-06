@@ -79,7 +79,8 @@ git submodule update --init firmware/clockfaces/   # PlatformIO only needs the c
   - `StatusController`: boot animation + LED blink patterns for status feedback.
   - `IClockface`: interface every clockface implements (`setup(CWDateTime*)`, `update()`).
 - **`firmware/lib/cw-gfx-engine/`** — game-engine-style graphics primitives (`Sprite`, `Tile`, `Game`, `Object`, `EventBus`, `Locator`) used by clockfaces that animate (Mario, Pacman, Castlevania).
-- **`firmware/clockfaces/cw-cf-0x0N/`** — each clockface is its own GitHub repo, must export a class named `Clockface` implementing `IClockface`. Canvas (`cw-cf-0x07`) is special: it renders a JSON-described theme fetched from a server, configured via `canvasFile` / `canvasServer` prefs. It re-fetches on the document's own `refresh` interval (default 30 min); see `docs/canvas-clockface.md` for the document schema, the `delay`-is-uint16 trap, and the UDP debug beacons.
+- **`firmware/clockfaces/cw-cf-0x0N/`** — each clockface is its own GitHub repo, must export a class named `Clockface` implementing `IClockface`. Canvas (`cw-cf-0x07`) is special: it renders a JSON-described theme fetched from a server, configured via `canvasFile` / `canvasServer` prefs. It re-fetches on the document's own `refresh` interval (default 30 min, floored at 15s); see `docs/canvas-clockface.md` for the document schema, the `delay`-is-uint16 trap, the `etag` repaint skip, the `w` / `scroll` / `scrollMs` text fields, and the UDP debug beacons.
+- **`firmware/lib/cw-textscroll/`**: pure scroll geometry, no Arduino dependency, host-tested with `pio test -e native`. Unlike `firmware/lib/cw-cf-*` this is NOT gitignored, so commit it directly with no `sync.sh` step. Host test suites live in `test/test_native*`, and PlatformIO builds each suite directory into one binary, so a new suite needs its own directory rather than another file alongside `SimpleTests.cpp`.
 
 ## Forked clockface source lives in `clockfaces-local/`
 
@@ -106,7 +107,11 @@ See `CHECKLIST.md` — manual today. Cutting a `releases/1.x.x` branch triggers 
 
 ## Known device
 
-Ryan's clock is at `192.168.1.245`. Settings UI: http://192.168.1.245/. Running `1.4.2` / `MOONRFSH` on `cw-cf-0x07` (Canvas), pointed at the moon worker. The `192.168.1.44` address in earlier notes is stale.
+Ryan's clock is at `192.168.1.245`. Settings UI: http://192.168.1.245/. Running `1.4.2` / `MOONSCRL` on `cw-cf-0x07` (Canvas), pointed at the moon worker. The `192.168.1.44` address in earlier notes is stale.
+
+**A pref change does not take effect until the device actually reboots**, and `POST /restart` returns 204 whether or not it reboots (issue #14). The running clockface keeps using the old value while `GET /get` reports the new one, so the two disagree and the panel is what tells the truth. Always trail a restart with a second request and confirm the reboot (a fresh `CF9` in the UDP beacon, or the refetch cadence changing) rather than assuming it. This cost 90 minutes on 2026-09-05 with the panel stuck on test content after the restore was believed done.
+
+The moon worker also serves `/hostile.json`, a deliberately hostile test face (long line, 24px narrow box, empty string, non-ASCII, looping line) for verifying firmware text rendering. Switch to it with `canvasFile=hostile` and back with `canvasFile=moon`; the moon face is never disturbed, so restoring needs no redeploy.
 
 The laptop is not always on that LAN. Reach the device through the pi-hole over Tailscale:
 
