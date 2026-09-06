@@ -1,5 +1,7 @@
 #include "unity.h"
+#include <stdio.h>
 #include "TextScroll.h"
+#include "ScrollVectors.h"
 
 // Lives in its own suite directory rather than alongside test_native/SimpleTests.cpp:
 // PlatformIO compiles every .cpp in a suite dir into a single binary, and
@@ -100,6 +102,22 @@ void test_mode_name_parsing(void) {
   TEST_ASSERT_EQUAL_UINT8(SCROLL_NONE, scrollModeFromName("nonsense"));
 }
 
+// Shared with the JS renderer in the panel-canvas repo. These rows come from
+// one file (test-vectors/scroll.tsv) so the studio's preview cannot drift from
+// the panel without failing a test in both languages. This file is the
+// reference: it is the code that actually runs on the wall.
+void test_shared_vectors(void) {
+  for (unsigned i = 0; i < SCROLL_VECTOR_COUNT; i++) {
+    const ScrollVector &v = SCROLL_VECTORS[i];
+    ScrollResult r = textScrollOffset(v.textW, v.boxW, v.elapsedMs, v.scrollMs, v.mode);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "vector %u (tw=%u bw=%u el=%lu mode=%u)",
+             i, v.textW, v.boxW, (unsigned long)v.elapsedMs, v.mode);
+    TEST_ASSERT_EQUAL_INT16_MESSAGE(v.offsetX, r.offsetX, msg);
+    TEST_ASSERT_EQUAL_MESSAGE(v.done, r.done, msg);
+  }
+}
+
 int runUnityTests(void) {
   UNITY_BEGIN();
   RUN_TEST(test_fitting_text_never_scrolls);
@@ -115,6 +133,7 @@ int runUnityTests(void) {
   RUN_TEST(test_zero_box_width_does_not_crash);
   RUN_TEST(test_zero_text_width_fits);
   RUN_TEST(test_mode_name_parsing);
+  RUN_TEST(test_shared_vectors);
   return UNITY_END();
 }
 
