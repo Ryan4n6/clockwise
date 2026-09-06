@@ -10,6 +10,8 @@ Remotes:
 - `origin` → `Ryan4n6/clockwise` (this fork — push here)
 - `upstream` → `jnthas/clockwise` (pull updates from here)
 
+**`main` is the trunk.** PR #12 merged the fork's accumulated work into it on 2026-09-06 (OTA, auto-brightness, moon Canvas over HTTP, canvas re-fetch, rotation phase 1), and `fix/auto-brightness-floor` and `feature/arduino-ota` were deleted both locally and on origin. Any earlier note calling `fix/auto-brightness-floor` the real trunk is obsolete. Branch from `main`. Our `main` now diverges from `upstream/main`, so pulling upstream is a merge rather than a fast-forward.
+
 ## Build systems — there are TWO, and they share source
 
 The same `firmware/src/main.cpp` is built by either system. The choice of clockface is the main differentiator.
