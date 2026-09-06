@@ -2,6 +2,7 @@
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include "DbgUdp.h"
 
 struct ClockwiseHttpClient
 {
@@ -12,7 +13,10 @@ struct ClockwiseHttpClient
     return &base;
   }
 
-  void httpGet(WiFiClientSecure *client, const char *host, const char *path, const uint16_t port)
+  // Takes a base WiFiClient* so the caller can pass either a plain WiFiClient
+  // (HTTP, no TLS handshake -> no big contiguous-heap demand) or a WiFiClientSecure
+  // (HTTPS; the caller calls setInsecure() on it before passing).
+  void httpGet(WiFiClient *client, const char *host, const char *path, const uint16_t port)
   {
     Serial.printf("[HTTP] GET request to '%s%s' on port %d\n", host, path, port);
 
@@ -22,13 +26,19 @@ struct ClockwiseHttpClient
       return;
     }
 
-    client->setInsecure();
     client->setTimeout(10000);
+    DBG((String("HG connect ") + host + ":" + port).c_str());
     if (!client->connect(host, port))
     {
+      // Log host/port/heap on failure. A TCP/TLS connect can fail on an egress
+      // block, a refuse/timeout, or (for HTTPS) too little contiguous heap for the
+      // handshake. maxAlloc is the tell for the memory case.
+      Serial.printf("[HTTP] CONNECT FAIL host=%s port=%d freeHeap=%d maxAlloc=%d\n",
+                    host, port, (int)ESP.getFreeHeap(), (int)ESP.getMaxAllocHeap());
       Serial.println(F("Connection failed"));
       return;
     }
+    DBG("HG connect OK");
 
     // Send HTTP request
     client->printf("GET %s HTTP/1.1\r\n", path);
@@ -49,6 +59,7 @@ struct ClockwiseHttpClient
     // Check HTTP status
     char status[32] = {0};
     client->readBytesUntil('\r', status, sizeof(status));
+    DBG((String("HG status=[") + status + "]").c_str());
 
     if (strstr(status, "200 OK") == NULL)
     {
@@ -57,6 +68,7 @@ struct ClockwiseHttpClient
       client->stop();
       return;
     }
+    DBG("HG status 200 OK");
 
     // Skip HTTP headers
     char endOfHeaders[] = "\r\n\r\n";
