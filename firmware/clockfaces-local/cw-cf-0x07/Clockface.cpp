@@ -84,6 +84,27 @@ void Clockface::refetchCanvas()
     }
     _lastEtag = etag;
 
+    // Rotation decision 3: a scroll replays on a change of FACE, not on a change
+    // of content. The weather face ticks a degree, the etag changes, the face
+    // does not, and restarting every scroller there would yank a half-read line
+    // back to its start every few minutes (clockwise#15).
+    //
+    // Matching carried state by elementIndex is sound precisely because the face
+    // is unchanged: the same face means the same template, so the element layout
+    // is stable and only the bound values differ. A face that hid an element
+    // conditionally would shift indexes underneath an unchanged face id and need
+    // a stronger key; nothing does that yet, and the guards below check the
+    // geometry as well.
+    const char *face = doc["face"] | "";
+    const bool sameFace = (face[0] != '\0' && _lastFace == face);
+    _lastFace = face;
+
+    _carriedScrollers.clear();
+    if (sameFace) {
+      _carriedScrollers.swap(scrollers);
+      DBG((String("CF13 same face, carrying ") + String((int)_carriedScrollers.size()) + " scroller(s)").c_str());
+    }
+
     // Content changed (or the document carries no etag, so we cannot know).
     // Drop sprites before rebuilding: their indexes referred to the previous
     // document and clockfaceSetup() recreates them from the new one. Scrollers
@@ -91,6 +112,7 @@ void Clockface::refetchCanvas()
     sprites.clear();
     scrollers.clear();
     clockfaceSetup();
+    _carriedScrollers.clear();
     DBG("CF11 canvas refetch OK, repainted");
   }
   else
@@ -100,7 +122,9 @@ void Clockface::refetchCanvas()
     // into it and hand renderImage() a nullptr -> LoadProhibited panic.
     sprites.clear();
     scrollers.clear();
+    _carriedScrollers.clear();
     _lastEtag = "";   // force a repaint on the next good fetch
+    _lastFace = "";   // and a full rebuild, so nothing is carried across a gap
     DBG("CF11 canvas refetch FAILED, keeping last frame");
   }
 }
@@ -473,7 +497,26 @@ void Clockface::buildScrollers()
 
     s.startMs     = millis();
     s.done        = false;
-    s.lastOffsetX = 1;      // impossible offset, forces the first draw
+
+    // Carry the scroll's position in time across a same-face repaint. Matching
+    // on the geometry as well as the index means a template that moved or
+    // resized this element replays rather than resuming part way through a line
+    // that is no longer in the same place. An element with no match, on a face
+    // that is otherwise the same, is new text and gets a fresh start, which is
+    // the replay rotation decision 3 asks for.
+    for (const TextScroller &prev : _carriedScrollers) {
+      if (prev.elementIndex == s.elementIndex && prev.mode == s.mode &&
+          prev.x == s.x && prev.y == s.y && prev.boxW == s.boxW) {
+        s.startMs = prev.startMs;
+        s.done    = prev.done;
+        break;
+      }
+    }
+
+    // Always the impossible offset, even on a carried scroller: the content
+    // behind it just changed, so the box has to be drawn once at whatever offset
+    // the carried clock puts it at.
+    s.lastOffsetX = 1;
     scrollers.push_back(s);
     idx++;
   }

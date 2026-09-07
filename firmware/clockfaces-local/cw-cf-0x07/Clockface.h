@@ -88,6 +88,20 @@ private:
   // the panel every 5 minutes all night. Empty means "no etag seen yet".
   String _lastEtag;
 
+  // Last rendered document's "face". Rotation decision 3: a scroll replays on a
+  // change of face only, never on a content change to the face already showing.
+  // Without this the weather face restarts every scroller each time the
+  // temperature ticks a degree, because that changes the etag while the face
+  // stays the same. Empty means "no face seen yet", which is also what a
+  // document carrying no "face" field gets, so a legacy canvas keeps today's
+  // behaviour exactly: rebuild everything, replay every scroll.
+  String _lastFace;
+
+  // Scroller state carried across a same-face repaint, handed from
+  // refetchCanvas() to buildScrollers() through clockfaceSetup(), which has no
+  // parameters to thread it through. Empty on every other path.
+  std::vector<TextScroller> _carriedScrollers;
+
   void refetchCanvas();
 
   void setFont(const char *fontName);
