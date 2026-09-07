@@ -109,7 +109,7 @@ See `CHECKLIST.md` — manual today. Cutting a `releases/1.x.x` branch triggers 
 
 ## Known device
 
-Ryan's clock is at `192.168.1.245`. Settings UI: http://192.168.1.245/. Running `1.4.2` / `MOONSCRL` on `cw-cf-0x07` (Canvas), pointed at the moon worker. The `192.168.1.44` address in earlier notes is stale.
+Ryan's clock is at `192.168.1.245`. Settings UI: http://192.168.1.245/. Running `1.4.2` / `CW_FACESCRL` on `cw-cf-0x07` (Canvas), pointed at the panel worker. As of 2026-09-07 the resting face is weather, not the moon: the worker's resolver ranks faces by urgency and weather (1) outranks the moon (0) whenever its digest is fresh. `CW_FACESCRL` carries clockwise#15, which keeps scroller state across a content change when the document's `face` is unchanged. The `192.168.1.44` address in earlier notes is stale.
 
 **A pref change does not take effect until the device actually reboots**, and `POST /restart` returns 204 whether or not it reboots (issue #14). The running clockface keeps using the old value while `GET /get` reports the new one, so the two disagree and the panel is what tells the truth. Always trail a restart with a second request and confirm the reboot (a fresh `CF9` in the UDP beacon, or the refetch cadence changing) rather than assuming it. This cost 90 minutes on 2026-09-05 with the panel stuck on test content after the restore was believed done.
 
