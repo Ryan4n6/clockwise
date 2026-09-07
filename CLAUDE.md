@@ -10,6 +10,11 @@ Remotes:
 - `origin` → `Ryan4n6/clockwise` (this fork — push here)
 - `upstream` → `jnthas/clockwise` (pull updates from here)
 
+**Always pass `-R Ryan4n6/clockwise` to `gh`.** With both remotes present, a bare
+`gh issue comment 15` resolved to `jnthas/clockwise` and posted onto a stranger's
+PR #15 (deleted immediately, 2026-09-07). `gh repo set-default Ryan4n6/clockwise`
+has been run, but the flag is the thing that cannot be wrong.
+
 **`main` is the trunk.** PR #12 merged the fork's accumulated work into it on 2026-09-06 (OTA, auto-brightness, moon Canvas over HTTP, canvas re-fetch, rotation phase 1), and `fix/auto-brightness-floor` and `feature/arduino-ota` were deleted both locally and on origin. Any earlier note calling `fix/auto-brightness-floor` the real trunk is obsolete. Branch from `main`. Our `main` now diverges from `upstream/main`, so pulling upstream is a merge rather than a fast-forward.
 
 ## Build systems — there are TWO, and they share source
