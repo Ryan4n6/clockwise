@@ -99,7 +99,69 @@ void test_mode_name_parsing(void) {
   TEST_ASSERT_EQUAL_UINT8(SCROLL_NONE, scrollModeFromName("none"));
   TEST_ASSERT_EQUAL_UINT8(SCROLL_ONCE, scrollModeFromName("once"));
   TEST_ASSERT_EQUAL_UINT8(SCROLL_LOOP, scrollModeFromName("loop"));
+  TEST_ASSERT_EQUAL_UINT8(SCROLL_TICKER, scrollModeFromName("ticker"));
   TEST_ASSERT_EQUAL_UINT8(SCROLL_NONE, scrollModeFromName("nonsense"));
+}
+
+// The ticker (clockwise#18). SCROLL_LOOP is a ping-pong and SCROLL_ONCE parks at
+// the head, so before this the panel had no way to show a long line in full more
+// than once. These pin the two properties that make it a ticker rather than
+// either of those: it cycles over the PITCH, and it never finishes.
+void test_ticker_cycles_over_pitch_not_travel(void) {
+  const uint16_t textW = 100, boxW = 62;
+  const uint16_t pitch = scrollTickerPitch(textW);   // 108
+  TEST_ASSERT_EQUAL_UINT16(textW + SCROLL_TICKER_GAP, pitch);
+
+  // At the step where travel runs out a ping-pong turns around. A ticker does
+  // not: the tail has left the box and the repeat is still coming in.
+  const uint16_t travel = textW - boxW;             // 38
+  ScrollResult r = textScrollOffset(textW, boxW, travel * 40UL, 40, SCROLL_TICKER);
+  TEST_ASSERT_EQUAL_INT16(-(int16_t)travel, r.offsetX);
+  TEST_ASSERT_FALSE(r.done);
+
+  r = textScrollOffset(textW, boxW, (travel + 1) * 40UL, 40, SCROLL_TICKER);
+  TEST_ASSERT_EQUAL_INT16(-(int16_t)(travel + 1), r.offsetX);
+}
+
+void test_ticker_wrap_is_seamless(void) {
+  const uint16_t textW = 100, boxW = 62;
+  const uint16_t pitch = scrollTickerPitch(textW);
+
+  // The frame one short of the pitch is the furthest left it ever goes.
+  ScrollResult last = textScrollOffset(textW, boxW, (pitch - 1) * 40UL, 40, SCROLL_TICKER);
+  TEST_ASSERT_EQUAL_INT16(-(int16_t)(pitch - 1), last.offsetX);
+
+  // And at exactly the pitch it is back at zero, which is the SAME PICTURE:
+  // drawTextBoxed() draws the string again one pitch to the right, so the copy
+  // that was at +pitch has arrived where the first copy started. Nothing jumps.
+  ScrollResult wrapped = textScrollOffset(textW, boxW, pitch * 40UL, 40, SCROLL_TICKER);
+  TEST_ASSERT_EQUAL_INT16(0, wrapped.offsetX);
+  TEST_ASSERT_FALSE(wrapped.done);
+}
+
+void test_ticker_never_finishes(void) {
+  // SCROLL_ONCE reports done after travel + SCROLL_HOLD_STEPS and stops being
+  // redrawn, which is what parked a long line at its own first 62px forever.
+  ScrollResult once = textScrollOffset(100, 62, 100000UL, 40, SCROLL_ONCE);
+  TEST_ASSERT_TRUE(once.done);
+  TEST_ASSERT_EQUAL_INT16(0, once.offsetX);
+
+  // A ticker at the same elapsed time is still moving, and still not done, at
+  // every lap.
+  for (uint32_t el = 0; el < 500000UL; el += 37000UL) {
+    ScrollResult r = textScrollOffset(100, 62, el, 40, SCROLL_TICKER);
+    TEST_ASSERT_FALSE(r.done);
+    TEST_ASSERT_TRUE(r.offsetX <= 0);
+    TEST_ASSERT_TRUE(r.offsetX > -(int16_t)scrollTickerPitch(100));
+  }
+}
+
+void test_ticker_that_fits_never_moves(void) {
+  // A line inside its box is not truncated, so there is nothing to scroll and
+  // moving it would be motion for its own sake.
+  ScrollResult r = textScrollOffset(40, 62, 100000UL, 40, SCROLL_TICKER);
+  TEST_ASSERT_EQUAL_INT16(0, r.offsetX);
+  TEST_ASSERT_TRUE(r.done);
 }
 
 // Shared with the JS renderer in the panel-canvas repo. These rows come from
@@ -129,6 +191,10 @@ int runUnityTests(void) {
   RUN_TEST(test_once_parks_at_start_and_finishes);
   RUN_TEST(test_once_stays_done);
   RUN_TEST(test_loop_pingpongs);
+  RUN_TEST(test_ticker_cycles_over_pitch_not_travel);
+  RUN_TEST(test_ticker_wrap_is_seamless);
+  RUN_TEST(test_ticker_never_finishes);
+  RUN_TEST(test_ticker_that_fits_never_moves);
   RUN_TEST(test_zero_scrollms_is_treated_as_one);
   RUN_TEST(test_zero_box_width_does_not_crash);
   RUN_TEST(test_zero_text_width_fits);

@@ -129,9 +129,11 @@ private:
 
   void setFont(const char *fontName);
   uint16_t measureTextWidth(const char *content, const char *fontName);
+  // tickerPitch 0 draws the string once. Non-zero draws it a second time that
+  // many pixels to the right, which is how SCROLL_TICKER gets a seamless wrap.
   void drawTextBoxed(int16_t x, int16_t y, const char *content,
                      const char *fontName, uint16_t fg, uint16_t bg,
-                     uint16_t boxW, int16_t offsetX);
+                     uint16_t boxW, int16_t offsetX, uint16_t tickerPitch = 0);
   void buildScrollers();
   void scrollLoop();
   void drawScroller(TextScroller &s, int16_t offsetX);

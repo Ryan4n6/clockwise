@@ -37,6 +37,19 @@ static const ScrollVector SCROLL_VECTORS[] = {
   { 100, 62, 10UL, 0, 1, -10, false },
   { 100, 0, 400UL, 40, 1, -10, false },
   { 0, 62, 400UL, 40, 1, 0, true },
+  { 100, 62, 0UL, 40, 3, 0, false },
+  { 100, 62, 40UL, 40, 3, -1, false },
+  { 100, 62, 2000UL, 40, 3, -50, false },
+  { 100, 62, 4280UL, 40, 3, -107, false },
+  { 100, 62, 4320UL, 40, 3, 0, false },
+  { 100, 62, 8640UL, 40, 3, 0, false },
+  { 100, 62, 12960UL, 40, 3, 0, false },
+  { 100, 62, 1520UL, 40, 3, -38, false },
+  { 40, 62, 100000UL, 40, 3, 0, true },
+  { 62, 62, 100000UL, 40, 3, 0, true },
+  { 100, 0, 1000UL, 40, 3, -25, false },
+  { 0, 62, 1000UL, 40, 3, 0, true },
+  { 100, 62, 1000UL, 0, 3, -28, false },
 };
 
 static const unsigned SCROLL_VECTOR_COUNT = sizeof(SCROLL_VECTORS) / sizeof(SCROLL_VECTORS[0]);

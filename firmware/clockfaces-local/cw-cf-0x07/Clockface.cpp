@@ -273,7 +273,7 @@ static bool measureTextBoundsHook(const char *fontName, const char *text,
 // transparent blit paints only set bits and would leave the last frame behind.
 void Clockface::drawTextBoxed(int16_t x, int16_t y, const char *content,
                               const char *fontName, uint16_t fg, uint16_t bg,
-                              uint16_t boxW, int16_t offsetX)
+                              uint16_t boxW, int16_t offsetX, uint16_t tickerPitch)
 {
   if (content == nullptr || boxW == 0) return;
 
@@ -296,6 +296,21 @@ void Clockface::drawTextBoxed(int16_t x, int16_t y, const char *content,
   // land the glyphs inside the canvas instead of above its top edge.
   canvas.setCursor(offsetX - bx, -by);
   canvas.print(content);
+
+  // The second copy, one pitch to the right, which is what makes a ticker a
+  // ticker and not a ping-pong (clockwise#18). While the tail of the first copy
+  // is leaving on the left, the head of this one is arriving on the right, and
+  // at offsetX == -pitch it sits exactly where the first copy started, so the
+  // wrap back to 0 is pixel identical and invisible.
+  //
+  // The comment in TextScroll.h used to call this too expensive to be worth it.
+  // It is one more print into a 1 bit buffer that is already being filled, and
+  // the canvas bounds check throws away everything past its right edge for free.
+  if (tickerPitch > 0)
+  {
+    canvas.setCursor(offsetX - bx + (int16_t)tickerPitch, -by);
+    canvas.print(content);
+  }
 
   // Anything past the box must be blank, because the blit below is canvas-wide.
   if (box < TEXTBOX_CANVAS_W)
@@ -623,7 +638,12 @@ void Clockface::drawScroller(TextScroller &s, int16_t offsetX)
                 value["font"].as<const char *>(),
                 value["fgColor"].as<const uint16_t>(),
                 value["bgColor"].as<const uint16_t>(),
-                s.boxW, offsetX);
+                s.boxW, offsetX,
+                // Only a ticker draws the repeat. The other modes never show the
+                // gap past the tail, so a second copy there would be invisible
+                // work, and for SCROLL_ONCE parked at the head it would not even
+                // be invisible: it would put a stray word in the box.
+                s.mode == SCROLL_TICKER ? scrollTickerPitch(s.textW) : 0);
 }
 
 void Clockface::clockfaceLoop() {
