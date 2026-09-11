@@ -114,7 +114,22 @@ See `CHECKLIST.md` — manual today. Cutting a `releases/1.x.x` branch triggers 
 
 ## Known device
 
-Ryan's clock is at `192.168.1.245`. Settings UI: http://192.168.1.245/. Running `1.4.2` / `CW_FACESCRL` on `cw-cf-0x07` (Canvas), pointed at the panel worker. As of 2026-09-07 the resting face is weather, not the moon: the worker's resolver ranks faces by urgency and weather (1) outranks the moon (0) whenever its digest is fresh. `CW_FACESCRL` carries clockwise#15, which keeps scroller state across a content change when the document's `face` is unchanged. The `192.168.1.44` address in earlier notes is stale.
+Ryan's clock is at `192.168.1.245`. Settings UI: http://192.168.1.245/. Running `1.4.2` / `CW_GHOSTFIX` on `cw-cf-0x07` (Canvas), pointed at the panel worker. The worker rotates four faces (moon, weather, agenda, gameday) on five minute slots, with anything at urgency 5 or over holding the panel instead; the note here that weather rests permanently is obsolete as of moon-canvas#12, which added the time term the resolver never had. `CW_GHOSTFIX` carries clockwise#15 (scroller state survives a content change when the document's `face` is unchanged), clockwise#16 (renderText erases the PREVIOUS extent, so a narrowing string cannot leave a ghost) and clockwise#17 (`GET /measure`). The `192.168.1.44` address in earlier notes is stale.
+
+The device answers `GET /measure?<font>=<text>` (clockwise#17), returning what
+Adafruit_GFX measures that string as on the hardware: `X-w`, `X-h`, `X-x1`,
+`X-y1`, plus `X-wrapW`/`X-wrapH` for the same string through the display, whose
+text wrap is on. The font is the query KEY and the string is the value, `+` is a
+space, and `%` is not decoded. `moon-canvas/scripts/pin-textbounds.mjs` walks a
+corpus through it and writes `test-vectors/textbounds.tsv`; re-run it after any
+font or text change on either side. Its first run found a real bug in the
+worker's port of getTextBounds (moon-canvas#22).
+
+**Set `FW_NAME` when you flash locally.** `platformio.ini` reads it from the
+environment and a bare `pio run -t upload` leaves `X-CW_FW_NAME` empty, which
+destroys the only marker that says which build is on the panel. It reports
+`UNNAMED-LOCAL` rather than an empty string now, but a real name is the point:
+`FW_NAME=CW_SOMETHING pio run -e ota -t upload`.
 
 **A pref change does not take effect until the device actually reboots**, and `POST /restart` returns 204 whether or not it reboots (issue #14). The running clockface keeps using the old value while `GET /get` reports the new one, so the two disagree and the panel is what tells the truth. Always trail a restart with a second request and confirm the reboot (a fresh `CF9` in the UDP beacon, or the refetch cadence changing) rather than assuming it. This cost 90 minutes on 2026-09-05 with the panel stuck on test content after the restore was believed done.
 

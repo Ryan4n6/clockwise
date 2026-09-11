@@ -19,6 +19,7 @@
 #include "PNGRender.h"
 #include "CustomSprite.h"
 #include "CWHttpClient.h"
+#include "CWTextMeasure.h"
 #include "DbgUdp.h"
 #include <TextScroll.h>
 
@@ -65,6 +66,28 @@ struct TextScroller {
   int16_t  lastOffsetX;    // skip the redraw when the offset has not changed
 };
 
+// The panel rectangle one text element last inked (clockwise#16).
+//
+// renderText()'s unclipped path erased the box of the string it was ABOUT to
+// draw, which is right only while strings never get narrower. `4:30` inks 35px
+// and `4:31` inks 31px in hour8pt7b, because `1` is 4px narrower than `0`, so
+// the last 4 columns of the old `0` were never erased and sat lit beside the new
+// `1`. Ryan watched it happen on the wall at 4:30 to 4:31.
+//
+// The cure is memory: erase where the glyphs ARE before drawing where they are
+// going. One of these per element, filled in after every draw.
+struct TextExtent {
+  int16_t  x, y;
+  uint16_t w, h;
+  bool     valid;
+};
+
+// Enough for any document that fits JSON_BUFFER_BYTES. The moon face draws 4
+// elements and the busiest rotation face draws 5; 32 is room to be wrong by a
+// factor of six. An element past this simply keeps the old behaviour, which is
+// the behaviour every canvas had before this existed.
+#define MAX_TEXT_EXTENTS 32
+
 class Clockface : public IClockface
 {
 private:
@@ -105,7 +128,6 @@ private:
   void refetchCanvas();
 
   void setFont(const char *fontName);
-  void setFontOn(Adafruit_GFX *target, const char *fontName);
   uint16_t measureTextWidth(const char *content, const char *fontName);
   void drawTextBoxed(int16_t x, int16_t y, const char *content,
                      const char *fontName, uint16_t fg, uint16_t bg,
@@ -117,7 +139,7 @@ private:
   void clockfaceSetup();
   void clockfaceLoop();
   void renderElements(JsonArrayConst elements);
-  void renderText(String text, JsonVariantConst value);
+  void renderText(String text, JsonVariantConst value, uint8_t elementIndex);
   void createSprites();
   void refreshDateTime();
   void drawSplashScreen(uint16_t color, const char *msg);
@@ -127,7 +149,15 @@ private:
   std::vector<std::shared_ptr<CustomSprite>> sprites;
   std::vector<TextScroller> scrollers;
 
+  // Indexed by position in doc["setup"], invalidated whenever that array can
+  // mean something different, which is any document change. See renderText().
+  TextExtent _lastExtent[MAX_TEXT_EXTENTS] = {};
+
 public:
+  // Public and static only so measureTextBoundsHook(), a free function handed to
+  // the web server as a plain function pointer, can reach it (clockwise#17).
+  static void setFontOn(Adafruit_GFX *target, const char *fontName);
+
   Clockface(Adafruit_GFX *display);
   void setup(CWDateTime *dateTime);
   void update();

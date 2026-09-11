@@ -4,10 +4,19 @@
 #include <CWPreferences.h>
 #include "StatusController.h"
 #include "SettingsWebPage.h"
+#include "CWTextMeasure.h"
 
 #ifndef CLOCKFACE_NAME
   #define CLOCKFACE_NAME "UNKNOWN"
 #endif
+
+// The build name comes from `${sysenv.FW_NAME}` in platformio.ini, which is
+// EMPTY for anyone who did not export FW_NAME, and a local `pio run -t upload`
+// does not. That name is the only thing on the device that says which build is
+// running, and the house rule here is to confirm a reboot rather than assume one,
+// which needs something to compare. An empty string cannot be compared to
+// anything, so an unnamed build says so out loud (clockwise#17).
+#define CW_FW_NAME_OR_UNNAMED (CW_FW_NAME[0] == '\0' ? "UNNAMED-LOCAL" : CW_FW_NAME)
 
 WiFiServer server(80);
 
@@ -17,7 +26,7 @@ struct ClockwiseWebServer
   bool force_restart;
   const char* HEADER_TEMPLATE_D = "X-%s: %d\r\n";
   const char* HEADER_TEMPLATE_S = "X-%s: %s\r\n";
- 
+
   static ClockwiseWebServer *getInstance()
   {
     static ClockwiseWebServer base;
@@ -94,6 +103,8 @@ struct ClockwiseWebServer
       if (key == "pin") {
         readPin(client, key, value.toInt());
       }
+    } else if (method == "GET" && path == "/measure") {
+      measureTextBounds(client, key, value);
     } else if (method == "POST" && path == "/restart") {
       client.println("HTTP/1.0 204 No Content");
       force_restart = true;
@@ -143,6 +154,51 @@ struct ClockwiseWebServer
 
 
 
+  // GET /measure?<font>=<text>  ->  X-w, X-h, X-x1, X-y1, X-wrapW, X-wrapH
+  //
+  // What the device thinks a string measures, so a server that places text by
+  // computing widths on a host can be checked against the hardware instead of
+  // trusted (clockwise#17). Nothing pinned those two together until this, and a
+  // clipped clock digit on the panel could not be explained from either side
+  // alone (moon-canvas#18).
+  //
+  // The font is the QUERY KEY and the string is the value, which looks odd and is
+  // deliberate: handleHttpRequest() splits exactly one `?key=value` pair, so this
+  // shape needs no parser change at all. `+` decodes to a space because a literal
+  // space would end the request line. `%` is not decoded: nothing in the panel's
+  // corpus needs it, and a half decoder that gets percent escapes wrong would
+  // make this endpoint lie, which is worse than it not accepting the character.
+  void measureTextBounds(WiFiClient client, String font, String text) {
+    CWMeasureTextFn measure = cwMeasureTextHook();
+    if (measure == nullptr) {
+      client.println("HTTP/1.0 501 Not Implemented");
+      client.println();
+      return;
+    }
+
+    text.replace('+', ' ');
+
+    int16_t x1 = 0, y1 = 0;
+    uint16_t w = 0, h = 0, wrapW = 0, wrapH = 0;
+    if (!measure(font.c_str(), text.c_str(), &x1, &y1, &w, &h, &wrapW, &wrapH)) {
+      client.println("HTTP/1.0 404 Not Found");   // no such font
+      client.println();
+      return;
+    }
+
+    client.println("HTTP/1.0 204 No Content");
+    client.printf(HEADER_TEMPLATE_D, "w", w);
+    client.printf(HEADER_TEMPLATE_D, "h", h);
+    client.printf(HEADER_TEMPLATE_D, "x1", x1);
+    client.printf(HEADER_TEMPLATE_D, "y1", y1);
+    client.printf(HEADER_TEMPLATE_D, "wrapW", wrapW);
+    client.printf(HEADER_TEMPLATE_D, "wrapH", wrapH);
+    client.printf(HEADER_TEMPLATE_S, "font", font.c_str());
+    client.printf(HEADER_TEMPLATE_D, "len", text.length());
+    client.println();
+  }
+
+
   void readPin(WiFiClient client, String key, uint16_t pin) {
     ClockwiseParams::getInstance()->load();
 
@@ -177,7 +233,7 @@ struct ClockwiseWebServer
     client.printf(HEADER_TEMPLATE_D, ClockwiseParams::getInstance()->PREF_E_PIN, ClockwiseParams::getInstance()->E_pin);
 
     client.printf(HEADER_TEMPLATE_S, "CW_FW_VERSION", CW_FW_VERSION);
-    client.printf(HEADER_TEMPLATE_S, "CW_FW_NAME", CW_FW_NAME);
+    client.printf(HEADER_TEMPLATE_S, "CW_FW_NAME", CW_FW_NAME_OR_UNNAMED);
     client.printf(HEADER_TEMPLATE_S, "CLOCKFACE_NAME", CLOCKFACE_NAME);
     client.println();
   }

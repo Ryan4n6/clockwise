@@ -14,9 +14,17 @@ Clockface::Clockface(Adafruit_GFX *display)
   Locator::provide(display);
 }
 
+// GET /measure's answer (clockwise#17). Defined further down, next to the other
+// measuring code, because it needs the text canvas and the font mapping and both
+// are declared below this point.
+static bool measureTextBoundsHook(const char *fontName, const char *text,
+                                  int16_t *x1, int16_t *y1, uint16_t *w, uint16_t *h,
+                                  uint16_t *wrapW, uint16_t *wrapH);
+
 void Clockface::setup(CWDateTime *dateTime)
 {
   this->_dateTime = dateTime;
+  cwMeasureTextHook() = &measureTextBoundsHook;
   drawSplashScreen(0xFFE0, "Downloading");
 
   if (deserializeDefinition()) {
@@ -201,6 +209,51 @@ uint16_t Clockface::measureTextWidth(const char *content, const char *fontName)
   return bw;
 }
 
+// What the device thinks a string measures, for GET /measure (clockwise#17).
+//
+// The name to font mapping is validated here rather than leaned on, because
+// setFontOn() falls through to the built in 5x7 for anything it does not
+// recognise. That fallback is right for rendering a document with a typo in it
+// and wrong for an endpoint whose entire job is to answer truthfully: a server
+// comparing its tables against a misspelled font would be told the typo is fine.
+static bool measureTextBoundsHook(const char *fontName, const char *text,
+                                  int16_t *x1, int16_t *y1, uint16_t *w, uint16_t *h,
+                                  uint16_t *wrapW, uint16_t *wrapH)
+{
+  if (fontName == nullptr || text == nullptr) return false;
+
+  // Exactly the four names setFontOn() recognises. Anything else is a 404 rather
+  // than a measurement of the built in 5x7, which is what setFontOn() would
+  // quietly hand back. Note for whoever pins these: the two sides disagree on
+  // what an UNKNOWN name means. The worker falls through to Picopixel and the
+  // firmware falls through to the 5x7, so a document with a misspelled font
+  // already renders in a font the server did not measure. No face emits one, and
+  // this endpoint refusing to answer keeps that gap visible.
+  if (strcmp(fontName, "picopixel") != 0 && strcmp(fontName, "square") != 0 &&
+      strcmp(fontName, "big") != 0 && strcmp(fontName, "medium") != 0)
+  {
+    return false;
+  }
+
+  // Unwrapped, off the same 1 bit canvas measureTextWidth() uses. This is the
+  // number a server placing an element is modelling.
+  GFXcanvas1 &canvas = textCanvas();
+  Clockface::setFontOn(&canvas, fontName);
+  canvas.getTextBounds(text, 0, 0, x1, y1, w, h);
+
+  // And again through the display, whose text wrap Adafruit_GFX leaves ON by
+  // default and which this clockface never turns off. That is the path
+  // renderText() takes for an element carrying no box, so it is the one that can
+  // surprise, and it agrees with the above for anything narrower than the panel.
+  //
+  // Borrowing the display's font here is safe: every render sets the font per
+  // element before drawing, so nothing downstream reads what this left behind.
+  int16_t wx, wy;
+  Clockface::setFontOn(Locator::getDisplay(), fontName);
+  Locator::getDisplay()->getTextBounds(text, 0, 0, &wx, &wy, wrapW, wrapH);
+  return true;
+}
+
 // Draw `content` into a boxW-wide window whose left edge is at `x`, shifted left
 // by `offsetX` (0 or negative). Used for both static truncation and scrolling,
 // so the two share one clipping path.
@@ -256,7 +309,7 @@ void Clockface::drawTextBoxed(int16_t x, int16_t y, const char *content,
                                     TEXTBOX_CANVAS_W, h, fg);
 }
 
-void Clockface::renderText(String text, JsonVariantConst value)
+void Clockface::renderText(String text, JsonVariantConst value, uint8_t elementIndex)
 {
   int16_t x1, y1;
   uint16_t w, h;
@@ -288,31 +341,58 @@ void Clockface::renderText(String text, JsonVariantConst value)
 
   Locator::getDisplay()->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
 
-  // BG Color
-  Locator::getDisplay()->fillRect(
-      value["x"].as<const uint16_t>() + x1,
-      value["y"].as<const uint16_t>() + y1,
-      w,
-      h,
-      value["bgColor"].as<const uint16_t>());
+  const int16_t ox = value["x"].as<const int16_t>();
+  const int16_t oy = value["y"].as<const int16_t>();
+  const uint16_t bg = value["bgColor"].as<const uint16_t>();
+
+  // ERASE WHERE THE GLYPHS ARE, THEN WHERE THEY ARE GOING (clockwise#16).
+  //
+  // This used to erase only the second of those, which is correct exactly as
+  // long as no string is ever narrower than the one it replaces. `4:30` inks
+  // 35px and `4:31` inks 31px, because `1` is 4px narrower than `0` in
+  // hour8pt7b, so the last 4 columns of the old zero were never cleared and
+  // stayed lit next to the new one. Ryan photographed it at 4:30 to 4:31.
+  //
+  // The worker mitigated it by giving every clock a `w`, which routes it down
+  // drawTextBoxed() instead and clears a fixed box. That is still the right
+  // thing for a text element whose content varies, because a box is stable
+  // geometry that the server can reason about. This is the cure underneath it:
+  // an element that carries no `w` at all is now also safe, which is every
+  // legacy canvas document ever written, none of which can be revised.
+  //
+  // Both rectangles, not just the previous one. The first draw has no previous
+  // extent, and a string that GREW needs the new area cleared too.
+  if (elementIndex < MAX_TEXT_EXTENTS && _lastExtent[elementIndex].valid)
+  {
+    const TextExtent &p = _lastExtent[elementIndex];
+    Locator::getDisplay()->fillRect(p.x, p.y, p.w, p.h, bg);
+  }
+  Locator::getDisplay()->fillRect(ox + x1, oy + y1, w, h, bg);
 
   Locator::getDisplay()->setTextColor(value["fgColor"].as<const uint16_t>());
-  Locator::getDisplay()->setCursor(value["x"].as<const uint16_t>(), value["y"].as<const uint16_t>());
+  Locator::getDisplay()->setCursor(ox, oy);
   Locator::getDisplay()->print(text);
+
+  if (elementIndex < MAX_TEXT_EXTENTS)
+  {
+    _lastExtent[elementIndex] = { (int16_t)(ox + x1), (int16_t)(oy + y1), w, h, true };
+  }
 }
 
 void Clockface::refreshDateTime()
 {
 
   JsonArrayConst elements = doc["setup"].as<JsonArrayConst>();
+  uint8_t i = 0;
   for (JsonVariantConst value : elements)
   {
     const char *type = value["type"].as<const char *>();
 
     if (strcmp(type, "datetime") == 0)
     {
-      renderText(_dateTime->getFormattedTime(value["content"].as<const char *>()), value);
+      renderText(_dateTime->getFormattedTime(value["content"].as<const char *>()), value, i);
     }
+    i++;
   }
 }
 
@@ -321,6 +401,13 @@ void Clockface::clockfaceSetup()
 
   // Clear screen
   Locator::getDisplay()->fillRect(0, 0, 64, 64, doc["bgColor"].as<const uint16_t>());
+
+  // And forget every remembered text extent with it (clockwise#16). These are
+  // keyed by position in doc["setup"], and a new document can put a different
+  // element at the same index. Erasing element 2's OLD rectangle on a document
+  // where element 2 has moved would rub out whatever element 1 just drew there.
+  // The full-screen clear above means there is nothing left to erase anyway.
+  for (uint8_t i = 0; i < MAX_TEXT_EXTENTS; i++) _lastExtent[i].valid = false;
 
   delay = doc["delay"].as<const uint16_t>();
 
@@ -572,13 +659,14 @@ void Clockface::scrollLoop() {
 
 void Clockface::renderElements(JsonArrayConst elements)
 {
+  uint8_t i = 0;
   for (JsonVariantConst value : elements)
   {
     const char *type = value["type"].as<const char *>();
 
     if (strcmp(type, "text") == 0)
     {
-      renderText(value["content"].as<const char *>(), value);
+      renderText(value["content"].as<const char *>(), value, i);
     }
     else if (strcmp(type, "fillrect") == 0)
     {
@@ -611,6 +699,7 @@ void Clockface::renderElements(JsonArrayConst elements)
     {
       renderImage(value["image"].as<const char *>(), value["x"].as<const uint8_t>(), value["y"].as<const uint8_t>());
     }
+    i++;
   }
 }
 
